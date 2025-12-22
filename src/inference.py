@@ -7,6 +7,8 @@ from tinygp import GaussianProcess, kernels
 
 from smbhb_jax import smbhb_two_masses
 
+def box_constraint(eta, min_val, max_val):
+    return min_val + (max_val-min_val)*jax.nn.sigmoid(eta)
 
 def make_tinygp_model(*, priors, build_mean=None, build_kernel=None):
     """
@@ -18,6 +20,10 @@ def make_tinygp_model(*, priors, build_mean=None, build_kernel=None):
         for name, val in priors.items():
             if isinstance(val, dist.Distribution):
                 params[name] = numpyro.sample(name, val)
+            elif isinstance(val, tuple):
+                params[name] = numpyro.sample(name, val[0])
+                repara_name = name.split('eta_')[1]
+                params[repara_name] = numpyro.deterministic(repara_name, box_constraint(params[name], val[1], val[2]))
             else:
                 params[name] = val
 

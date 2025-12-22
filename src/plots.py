@@ -5,7 +5,7 @@ from corner import corner
 
 def corner_plot(samples, names=None, true_params=None):
     if names is None:
-        names = [k for k in samples.keys() if 'pred' not in k]
+        names = [k for k in samples.keys() if 'pred' not in k and 'eta' not in k]
     fig_corner = corner(
         data=np.stack([samples[k] for k in names]).T, bins=30, labels=names, show_titles=True, 
     );
