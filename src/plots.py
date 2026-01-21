@@ -287,6 +287,18 @@ def plot_corner(result, bestfit=False, values_input=None):
     return figure
 
 
+    #     gp_med_std = jnp.median(samples["pred_gp_std"], axis=0)
+    #     ax.plot(x, gp_med_mean, color="royalblue")
+    #     ax.fill_between(x, gp_med_mean - 2*gp_med_std, gp_med_mean + 2*gp_med_std,
+    #                     color="royalblue", alpha=0.3)
+    # if 'pred_smbhb' in samples:
+    #     q = jnp.percentile(samples["pred_smbhb"], jnp.array([1, 50, 99]), axis=0)
+    #     ax.plot(x, q[1], color="orange")
+    #     ax.fill_between(x, q[0], q[2], color="orange", alpha=0.3)
+    # xmin, xmax = min(x), max(x)
+    # dx = (xmax - xmin) * 0.01
+    # ax.set_xlim(xmin-dx, xmax+dx)
+
 #--------------------------------------------------------------#
 #                       ULTRANEST METHODS                      #
 #--------------------------------------------------------------#
