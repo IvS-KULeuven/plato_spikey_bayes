@@ -13,3 +13,13 @@ uv run jupyter notebook
 ```
 
 and select one of the notebooks in the `notebook` subdirectory.
+
+Light curves are stored in the `data` subdirectory with the format:
+```
+data_<source>_<instrument>_<binning>.csv
+```
+
+Bayesian inferences are stored in the `results` subdirectory with the format:
+```
+<source>_<instrument>_<QDM>_<binning>_<inference>_<priors>.csv
+```
