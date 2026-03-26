@@ -347,7 +347,7 @@ def plot_corner_mcmc(samples, names=None, color='royalblue', bins=30, smooth=1.2
     return fig
 
 
-def predictive_posterior_drw(samples):
+def predictive_posterior_drw(ax, samples, x):
     if 'pred_gp_mean' in samples:
         gp_med_mean = jnp.median(samples["pred_gp_mean"], axis=0)
         gp_med_std  = jnp.median(samples["pred_gp_std"], axis=0)

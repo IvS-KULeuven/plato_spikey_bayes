@@ -49,7 +49,7 @@ def make_smbhb_model(*, priors, build_mean=None):
             mean = params['mean']
         else:
             raise ValueError("Provide either a mean function or set builder_mean='mean'")
-        if callable(mean):
+        if callable(mean) and x_interp is not None:
             numpyro.deterministic("pred_smbhb", jax.vmap(mean)(x_interp))
     return model
 
@@ -85,9 +85,9 @@ x    model(x, yerr, y=None, fixed=None, x_interp=None)
         else:
             if not callable(mean):
                 raise ValueError('You have to provide a mean function or a kernel function')
-            numpyro.sample('obs', dist.Normal(jax.vmap(mean)(x), yerr).to_event(1), obs=y)
-        if callable(mean):
-            numpyro.deterministic("pred_smbhb", jax.vmap(mean)(x_interp))
+            numpyro.sample('obs', dist.Normal(mean(x), yerr).to_event(1), obs=y)
+        if callable(mean) and x_interp is not None:
+            numpyro.deterministic("pred_smbhb", mean(x_interp))
     return model
 
 
@@ -96,7 +96,7 @@ def drw_kernel(p):
 
 
 def smbhb_mean_builder(p):
-    return partial(smbhb_jax, **p)
+    return jax.vmap(partial(smbhb_jax, **p))
 
 
 def get_drw_lc(time, samples):
