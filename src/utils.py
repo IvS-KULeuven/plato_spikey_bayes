@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.stats import binned_statistic
+import smbhb as smbhb
 
 #--------------------------------------------------------------#
 #                       PUBLIC FUNCTIONS                       #
@@ -29,6 +30,12 @@ def year2sec():
     return 31556926
 
 
+def year2day():
+    """Return 1 year in days.
+    """
+    return year2sec() / day2sec()
+
+
 def quarter():
     """Return 1 mission quarter in days.
     """    
@@ -44,6 +51,12 @@ def rng(seed=None):
         return np.random.default_rng(seed=seed)        
 
 
+def mag2flux(mag):
+    """Convert relative magnitude to relative flux.
+    """
+    return 10**(-0.4*mag)
+
+    
 def bin_lc(df, bin_size=1):
     """Bin data wrt to the input time scale and cadence.
     """
@@ -67,8 +80,7 @@ def bin_lc(df, bin_size=1):
     # Make sure to remove NaNs
     return pd.DataFrame(data, columns=cols).dropna()
 
-    
-
+        
 def get_psd(time, tau, sigma):
     """Generate a red noise model from the PSD [ppm^2/microHz].
 
@@ -103,6 +115,29 @@ def get_psd(time, tau, sigma):
         tau  = tau[n]
         psd += tau**2 * sigma**2 / (1 + (2 * np.pi * freq * tau)**2)
     return psd
+
+
+def load_result(filename):
+    """Load- binary file into a dictorionary.
+    """
+    return np.load(filename, allow_pickle=True).item()
+
+
+def get_percentiles(result, pt_low=16, pt_upp=84, latex=False):
+    """Fetch posterior per centiles.
+    """
+    table = {}
+    samples = result['samples']
+    names   = result['names']
+    for n in names:
+        sample  = samples[n]
+        val     = np.percentile(sample, 50, axis=0)
+        val_low = np.percentile(sample, pt_low, axis=0) - val
+        val_upp = np.percentile(sample, pt_upp, axis=0) - val
+        table.update({f'{n}':val, f'{n}_low':val_low, f'{n}_upp':val_upp})
+        if latex:
+            print(n,': pmx','{',f'{val:.4f}','}{',f'{val_low:.4f}','}{',f'{val_upp:.4f}','}')
+    return table
 
 
 # def fetch_gaia_info(df, NED=False):

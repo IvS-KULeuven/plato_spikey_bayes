@@ -6,7 +6,7 @@ This python modules for model generation using Numba JIT.
 # Built-in
 import datetime
 
-# PlatoSim standard
+# uv dependencies
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -295,17 +295,24 @@ def get_df(time, flux, flux_lens, flux_boost, flux_red=None):
     return df
 
 
-def model_lightcurve(time, params):
+def model_lightcurve(time, values, df=True):
     """Save UltraNest result to a json file.
     """        
-    model = model(params)
-    flux, flux_lens, flux_boost, flux  = model.light_curve(time, comp=True)
-    dm = pd.DataFrame({'time': time, 'flux': flux})
-    return dm
-    # return pd.DataFrame({'time': time, 
-    #                      'flux': flux_total, 
-    #                      'flux_planet': flux_planet, 
-    #                      'flux_moon': flux_moon})
+    if isinstance(values, dict):
+        params = model_params()
+        params.t0    = values['t0']
+        params.P     = values['P']
+        params.i     = values['i']
+        params.e     = values['e']
+        params.w     = values['w']
+        params.logM1 = values['logM1']
+        params.logM2 = values['logM2']
+        params.L     = values['L']
+        params.alpha = values['alpha']
+        params.sigma = 0
+    model_lc = model(params)
+    return model_lc.light_curve(time, df=df)
+
 
 #-----------------------------------------------------------------
 

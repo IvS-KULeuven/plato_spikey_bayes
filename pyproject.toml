@@ -15,6 +15,7 @@ dependencies = [
     "jupyter>=1.1.1",
     "jupyter-client>=8.8.0",
     "matplotlib>=3.10.7",
+    "mpi4py>=4.1.1",
     "nifty-ls>=1.1.0",
     "notebook>=7.5.1",
     "numba>=0.63.1",
