@@ -12,6 +12,7 @@ import datetime
 # Dependencies
 import corner
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib import ticker
 from matplotlib.gridspec import GridSpec
@@ -154,24 +155,35 @@ def plot_model(df, lw=1.5, figsize=(9,5)):
 
 
 def plot_lc(df, dm=None, dv=None, cm='royalblue', cv='orange',
-            ms=6, alpha=0.5, figsize=(9,5)):
+            ms=6, lw=2, alpha=0.5, figsize=(9,5)):
     """Select data around planet transits.
     ----------
-    df : data  frame (time [d], flux [pp1], flux_err [pp1])
-    dm : model frame (time [d], flux [pp1], flux_err [pp1])
-    dv : input frame (time [d], flux [pp1], flux_err [pp1])
+    df : data  frame: {time [d], flux [pp1], flux_err [pp1]}
+    dm : model frame: {time [d], flux [pp1], flux_err [pp1]}
+    dv : input frame: {time [d], flux [pp1], flux_err [pp1]}
     """
     time = df.time.to_numpy()
     fig, ax = plt.subplots(1, 1, figsize=figsize)
     ax.errorbar(df.time, df.flux, yerr=df.flux_err, fmt='.k', ms=ms, alpha=alpha, zorder=1)
     if dm is not None:
-        ax.plot(dm.time, dm.flux, '-', c=cm)
+        ax.plot(dm.time, dm.flux, '-', c=cm, lw=lw)
     if dv is not None:
-        ax.plot(dv.time, dv.flux, '-', c=cv)        
+        ax.plot(dv.time, dv.flux, '-', c=cv, lw=lw)        
     ax.set_xlabel("Time [days]")
     ax.set_ylabel("Normalized flux")
     ax.set_xlim(time[0], time[-1])
     plt.tight_layout()
+    return fig, ax
+
+
+def plot_clusters(samples, cluster_model, response, param_cluster, figsize=(9,5)):
+    """Plot dat modalities (clusters) in the posterior landscape.
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+    for k in range(cluster_model.n_components):
+        ax.hist(samples[param_cluster][response==k])
+    ax.set_xlabel(param_cluster)
+    ax.set_ylabel('Sample counts');
     return fig, ax
 
 
@@ -252,40 +264,139 @@ def plot_result(df, dm, alpha=0.5, ms=3,
     return fig, [ax0, ax1]
 
 
+def plot_parameter_variation(path, files, values, parameter, unit='', 
+                             fiducial=False, ofile=False):
+    # Get default paths
+    rdir = path / 'simulations/lcs/reduced'
+    vdir = path / 'simulations/lcs/varsource'
+    
+    # Load light curves of 1h cadence
+    dh1 = pd.read_feather(rdir / f'lc_spikey_{files[0]}_1h.ftr')
+    dh2 = pd.read_feather(rdir / f'lc_spikey_{files[1]}_1h.ftr')
+    dh3 = pd.read_feather(rdir / f'lc_spikey_{files[2]}_1h.ftr')
+    dh4 = pd.read_feather(rdir / f'lc_spikey_{files[3]}_1h.ftr')
+    dh_all = [dh1, dh2, dh3, dh4]
+    
+    # Load light curves of 1d cadence
+    dd1 = pd.read_feather(rdir / f'lc_spikey_{files[0]}_1d.ftr')
+    dd2 = pd.read_feather(rdir / f'lc_spikey_{files[1]}_1d.ftr')
+    dd3 = pd.read_feather(rdir / f'lc_spikey_{files[2]}_1d.ftr')
+    dd4 = pd.read_feather(rdir / f'lc_spikey_{files[3]}_1d.ftr')
+    dd_all = [dd1, dd2, dd3, dd4]
+    
+    # Load variable source injected
+    if fiducial:
+        dv = pd.read_feather(vdir / f'varsource_spikey_fiducial_components.ftr')
+        dv_all = [dv, dv, dv, dv]
+    else:
+        dv1 = pd.read_feather(vdir / f'varsource_spikey_{files[0]}_components.ftr')
+        dv2 = pd.read_feather(vdir / f'varsource_spikey_{files[1]}_components.ftr')
+        dv3 = pd.read_feather(vdir / f'varsource_spikey_{files[2]}_components.ftr')
+        dv4 = pd.read_feather(vdir / f'varsource_spikey_{files[3]}_components.ftr')
+        dv_all = [dv1, dv2, dv3, dv4]
+        
+    # Plot variables
+    th = dh1.time
+    td = dd1.time
+    N = len(dh_all)
+    ah, ad = 0.1, 0.3
+    ch, cd, cv, cvm = 'k', 'gray', 'royalblue', 'orange'
+    
+    # Plot magnitude dependence of Spikey
+    fig, ax = plt.subplots(N, 1, figsize=(8.5, 9))
+    for i, x, dh, dd, dv in zip(range(N), values, dh_all, dd_all, dv_all):
+        # Get proper models
+        fh, fh_err = (dh.flux - 1) * 1e3, dh.flux_err * 1e3
+        fd, fd_err = (dd.flux - 1) * 1e3, dd.flux_err * 1e3
+        tv, fv = dv.time / 86400, (dv.flux - 1) * 1e3
+        fv_model = (dv.flux_boost * dv.flux_lens - 1) * 1e3
+        # Plot all
+        if isinstance(x, float):
+            value = f'{x:.1f}'
+        else:
+            value = f'{x:.0f}'
+        ax[i].errorbar(th, fh, yerr=fh_err, fmt='.', c=ch, alpha=ah, zorder=1, 
+                       label=parameter + r' = ' + value + unit)
+        ax[i].errorbar(td, fd, yerr=fd_err, fmt='.', c=cd, alpha=ad, zorder=1)
+        ax[i].plot(tv, fv, '-', c=cv, lw=0.8)
+        ax[i].plot(tv, fv_model, '-', c=cvm, lw=1.5)
+        # Settings
+        ax[i].set_xlim(th.min(), th.max())
+        ax[i].legend(loc='upper center', fontsize=15)
+
+    # Add quarter marks
+    plot_quarter_marks(ax, th.to_numpy(), N, Q0=1)
+
+    # Global settings
+    ax[N-1].set_xlabel('Time [days]')
+    fig.text(0.01, 0.5, 'Flux [ppt]', va='center', rotation='vertical')
+    plt.tight_layout(h_pad=0)
+    fig.subplots_adjust(hspace=0)
+
+    # Extra for magnitude
+    if fiducial == 'mag':
+        ax[-1].set_ylim(-170, 170)
+
+    # Save figure
+    if ofile:
+        ofile = path / 'figures' / ofile
+        fig.savefig(ofile, bbox_inches='tight', dpi=200)
+
 #--------------------------------------------------------------#
 #                       ULTRANEST METHODS                      #
 #--------------------------------------------------------------#
 
-def plot_corner(result, bestfit=False, values_input=None):
+def plot_corner(result, names=None, color='royalblue', smooth=1.1, fs=18,
+                best_params=None, best_color='k',
+                true_params=None, true_color='darkorange'):
     """Select data around planet transits.
-    
-    Parameters
-    ----------
     """
-    # Create corner figure
-    figure = corner.corner(
-        result['samples'],
-        smooth=1.5,
-        color='royalblue',
-        labels=result['paramnames'],
+    # Fetch samples of each model parameter
+    if names is None: names = result['names']
+    if isinstance(result['samples'], np.ndarray):
+        data = result['samples']
+    else:
+        data = np.stack([result['samples'][n] for n in names]).T
+
+    # Create corner plot
+    fig = corner.corner(
+        data,
+        smooth=smooth,
+        color=color,
+        labels=names,
         show_titles=True,
-        title_kwargs={"fontsize": 18},
+        title_kwargs={"fontsize": fs},
         quantiles=[0.16, 0.5, 0.84],
     )
-    if bestfit in ['maximum', 'median', 'mean']:
-        if bestfit == 'maximum':
-            values_bestfit = np.array(result['maximum_likelihood']['point'])
-        else:
-            values_bestfit = np.array(result['posterior'][bestfit])
-        corner.overplot_lines(figure,  values_bestfit, color='deeppink', lw=1)
-        corner.overplot_points(figure, values_bestfit[None], marker="s", color='deeppink')
-    if values_input is not None:
-        if isinstance(values_input, list):
-            values_input = np.array(values_input)
-        corner.overplot_lines(figure,  values_input, color='orange', lw=1)    
-        corner.overplot_points(figure, values_input[None], marker="s", color='orange')
-    return figure
 
+    # Plot lines of best-fit parameters
+    if best_params:
+        if isinstance(best_params, list):
+            best_params = np.array(best_params)
+        elif isinstance(best_params, str):
+            methods = ['mle', 'map', 'mean', 'median']
+            if best_params in methods:
+                if best_params == 'mle':
+                    dict_params = result['likelihood']['mle']
+                else:
+                    dict_params = result['posterior'][best_params]
+                best_params = np.array([dict_params[n] for n in names])
+            else:
+                print(f'Possible strings: {methods}'); exit()
+        corner.overplot_lines(fig,  best_params,       color=best_color, lw=1)
+        corner.overplot_points(fig, best_params[None], color=best_color, marker='s')        
+
+    # Plot lines of true injected parameters
+    if true_params:
+        if isinstance(true_params, list):
+            true_params = np.array(true_params)
+        else: # isinstance(true_params, dict):
+            true_params = np.array([result['params'][n] for n in names])
+        corner.overplot_lines(fig,  true_params, color=true_color, lw=1)    
+        corner.overplot_points(fig, true_params[None], marker="s", color=true_color)
+
+    # Finito!
+    return fig
 
     #     gp_med_std = jnp.median(samples["pred_gp_std"], axis=0)
     #     ax.plot(x, gp_med_mean, color="royalblue")
@@ -300,12 +411,12 @@ def plot_corner(result, bestfit=False, values_input=None):
     # ax.set_xlim(xmin-dx, xmax+dx)
 
 #--------------------------------------------------------------#
-#                       ULTRANEST METHODS                      #
+#                        NUMPYRO METHODS                       #
 #--------------------------------------------------------------#
 
-def plot_corner_mcmc(samples, names=None, color='royalblue', bins=30, smooth=1.2, fs=18,
+def plot_corner_mcmc(samples, names=None, color='royalblue', bins=30, smooth=1.1, fs=18,
                      best_params=None, best_color='k', bestfit=None,
-                     true_params=None, true_color='orange'):
+                     true_params=None, true_color='darkorange'):
     """Select data around planet transits.
     """
     # Fetch parameters names

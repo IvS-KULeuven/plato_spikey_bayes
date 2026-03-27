@@ -7,33 +7,212 @@ import datetime
 from functools import partial
 
 # Repository dependencies
+import scipy
 import numpy as np
 import pandas as pd
-# MCMC inference
+from sklearn.mixture import GaussianMixture
+# JAX
 import jax
+from jax import random
 from jax import numpy as jnp
+jax.config.update("jax_enable_x64", True)
+# JAXNS
+from jaxns import summary
+# NymPyro
 import numpyro
 import numpyro.distributions as dist
+from numpyro.infer import NUTS, MCMC
+from numpyro.infer.util import log_density
+from numpyro.contrib.nested_sampling import NestedSampler
+# Gaussian process
+from tinygp import GaussianProcess, kernels
 # Nested sampling
 import ultranest
 import ultranest.stepsampler
 from ultranest import ReactiveNestedSampler
 from ultranest.plot import cornerplot
-# Gaussian process
-from tinygp import GaussianProcess, kernels
 
 # Internal dependencies
 import smbhb as smbhb
-from smbhb_jax import smbhb_jax
+import plots as pt
+from smbhb_jax import smbhb_jax, smbhb_jax_q
 
 #--------------------------------------------------------------#
-#                         NUMPYRO METHODS                        #
+#                       INTERNAL METHODS                       #
 #--------------------------------------------------------------#
+
+def _get_numpy_arrays(df):
+    """Fetch a list of model parameter names.
+    """
+    time = df.time.to_numpy()
+    flux = df.flux.to_numpy()
+    flux_err = df.flux_err.to_numpy()
+    return time, flux, flux_err
+
+
+def _get_jax_arrays(df):
+    """Fetch a list of model parameter names.
+    """    
+    time = jnp.asarray(df.time)
+    flux = jnp.asarray(df.flux)
+    ferr = jnp.asarray(df.flux_err)
+    return time, flux, ferr
+
+
+def _get_param_names(priors):
+    """Fetch a list of model parameter names.
+    """
+    names = []
+    for n,v in zip(priors.keys(), priors.values()):
+        if not isinstance(v, float):
+            names.append(n)
+    return names
+
+
+def _get_params_dict(params):
+    """Transform parameter class instance to dictionary.
+    """
+    params_dict = {
+        'z'    : params.z,         
+        't0'   : params.t0, 
+        'P'    : params.P, 
+        'i'    : params.i, 
+        'e'    : params.e, 
+        'w'    : params.w, 
+        'logM1': params.logM1, 
+        'logM2': params.logM2, 
+        'L'    : params.L, 
+        'alpha': params.alpha,
+        'vz'   : params.vz,
+        'tau'  : params.tau,
+        'sigma': params.sigma,
+        'seed' : params.seed         
+    }
+    return params_dict
+
+
+def _log_posterior(df, model, params):
+    """Fetch log posterior density.
+    """
+    lp, _ = log_density(
+        model,
+        model_args=(_get_jax_arrays(df)),
+        model_kwargs={},
+        params=params
+    )
+    return lp
+
+
+def _get_mle(df, priors, build_kernel, build_mean, samples, names):
+    """Fetch Maximum Likelihood Estimate (MPLE).
+    """
+    posterior = [{k: samples[k][i].item() for k in names} for i in range(len(names))]
+    model  = make_tinygp_model(
+        priors=priors,
+        build_kernel=build_kernel,
+        build_mean=build_mean
+    )
+    logps = [_log_posterior(df, model, p) for p in posterior]
+    imax  = int(jnp.argmax(jnp.array(logps)))
+    return posterior[imax]
+
+
+def _get_mode(sample):
+    """Fetch mode of posterior.
+    """    
+    return scipy.stats.mode(sample)[0]
+
+
+def _get_percentile(sample, pt):
+    """Fetch percentile of posterior.
+    """    
+    return np.percentile(sample, pt, axis=0)
+
+
+def _get_posterior(samples, names, pt_low=16, pt_upp=84, latex=False):
+    """Fetch posteriors from samples.
+    """
+    posterior = {
+        'map': np.array([_get_mode(samples[n]) for n in names], dtype=float).tolist(),
+        'mean': np.array([np.mean(samples[n]) for n in names], dtype=float).tolist(),
+        'median': np.array([np.median(samples[n]) for n in names]).tolist(),
+        'std': np.array([np.std(samples[n]) for n in names]).tolist(),
+        'err_low': np.array([_get_percentile(samples[n], pt_low) -
+                             _get_percentile(samples[n], 50) for n in names]).tolist(),
+        'err_upp': np.array([_get_percentile(samples[n], pt_upp) -
+                             _get_percentile(samples[n], 50) for n in names]).tolist(),
+    }
+    if latex:
+        print(posterior["mean"][0]); exit()
+        for n,i in zip(names, len(names)):
+            print(n,': pmx','{',
+                  f'{posterior["mean"][i]:.4f}','}{',
+                  f'{posterior["err_low"][i]:.4f}','}{',
+                  f'{posterior["err_upp"][i]:.4f}','}')
+    
+    return posterior
+
+
+def _save_result(params, names, values, priors, samples, values_mle, ofile=None):
+    """Fetch and save result dictionary.
+    """
+    posterior = _get_posterior(samples, names)
+    result = {
+        # Injected parameters
+        'params'   : params,
+        'names'    : names,
+        'values'   : values,
+        # Bayesian inferences
+        #'niter': niter,
+        #'logz': logz,
+        #'logz_err': logz_err,
+        'priors'   : priors,
+        'samples'  : samples,
+        'posterior': {
+            'map'    : posterior['map'],
+            'mean'   : posterior['mean'],
+            'median' : posterior['median'],
+            'std'    : posterior['std'], 
+            'err_low': posterior['err_low'],
+            'err_upp': posterior['err_upp'],
+        },
+        'likelihood': {
+            #'logl': ,
+            'mle' : values_mle,
+        },       
+    }
+    if ofile:
+        ofile.parent.mkdir(parents=True, exist_ok=True)
+        np.save(ofile, result)
+    return result
+
+#--------------------------------------------------------------#
+#                  NUMPYRO AND JAXNS METHODS                   #
+#--------------------------------------------------------------#
+
+def model_priors_dict(params):
+    """Model priors of Spikey in dict.
+    """
+    priors = {
+    'z'    : params.z,
+    't0'   : dist.Uniform(0, 3),
+    'P'    : dist.Uniform(0, 5),
+    'i'    : dist.Uniform(0, 90),
+    'e'    : dist.Uniform(0, 1),
+    'w'    : dist.Uniform(0, 360),
+    'logM1': dist.Uniform(5, 11),
+    'logM2': dist.Uniform(5, 11),
+    'alpha': dist.Uniform(-4, 4),
+    'L'    : dist.Uniform(0, 1),
+    'vz'   : params.vz,
+    }
+    return priors
+
 
 def make_smbhb_model(*, priors, build_mean=None):
     """
-        Returns a NumPyro model function:
-        model(x, yerr, y=None, fixed=None, x_interp=None)
+    Returns a NumPyro model function:
+    model(x, yerr, y=None, fixed=None, x_interp=None)
     """
     def model(x, yerr, y=None, x_interp=None):
         params = {}
@@ -58,7 +237,7 @@ def make_tinygp_model(*, priors, build_mean=None, build_kernel=None):
     """Function to generate NumPyro Gaussian process model.
  
     Returns a NumPyro model function:
-x    model(x, yerr, y=None, fixed=None, x_interp=None)
+    model(x, yerr, y=None, fixed=None, x_interp=None)
     """
     def model(x, yerr, y=None, x_interp=None):
         params = {}
@@ -67,13 +246,14 @@ x    model(x, yerr, y=None, fixed=None, x_interp=None)
                 params[name] = numpyro.sample(name, val)
             else:
                 params[name] = val
-
+        # Case where a mean model is parsed
         if build_mean is not None:
             mean = build_mean(params)
         elif 'mean' in params:
             mean = params['mean']
         else:
             raise ValueError("Provide either a mean function or set builder_mean='mean'")
+        # Case to handle DRW modelling with GP
         if build_kernel is not None:
             kernel = build_kernel(params)
             gp = GaussianProcess(kernel, x, diag=jnp.square(yerr), mean=mean)
@@ -86,17 +266,32 @@ x    model(x, yerr, y=None, fixed=None, x_interp=None)
             if not callable(mean):
                 raise ValueError('You have to provide a mean function or a kernel function')
             numpyro.sample('obs', dist.Normal(mean(x), yerr).to_event(1), obs=y)
+        #
         if callable(mean) and x_interp is not None:
             numpyro.deterministic("pred_smbhb", mean(x_interp))
     return model
+
+
+def drop_pred_params(results):
+    """Drop the quantiles of the predictive posterior.
+    """
+    filtered_samples = {
+        k: v for k, v in results.samples.items()
+        if not k.startswith("pred_")
+    }
+    return results._replace(samples=filtered_samples)
 
 
 def drw_kernel(p):
     return (p["sigma"]**2) * kernels.quasisep.Exp(scale=p["tau"])
 
 
-def smbhb_mean_builder(p):
+def smbhb_mean_builder(p, q=False):
     return jax.vmap(partial(smbhb_jax, **p))
+
+
+def smbhb_mean_builder_q(p):
+    return jax.vmap(partial(smbhb_jax_q, **p))
 
 
 def get_drw_lc(time, samples):
@@ -109,8 +304,136 @@ def get_drw_lc(time, samples):
     return pd.DataFrame({'time': time, 'flux': gp_med_mean, 'flux_err': gp_med_std})
 
 
+def run_numpyro(df, params, priors, build_mean,
+                build_kernel=None,
+                target_accept_prob=0.9,
+                dense_mass=True,
+                max_tree_depth=5,
+                num_warmup=1000,
+                num_samples=10_000,
+                num_chains=4,
+                progress_bar=True,
+                jit_model_args=True,
+                ofile=None):
+    """Function to run NumPyro modelling.
+    """    
+    # Initialise NUTS kernel
+    kernel = NUTS(
+        make_tinygp_model(
+            priors=priors,
+            build_kernel=build_kernel,
+            build_mean=build_mean
+        ), 
+        target_accept_prob=target_accept_prob,
+        dense_mass=dense_mass,
+        max_tree_depth=max_tree_depth
+    )
+    # Intialise MCMC class
+    mcmc = MCMC(
+        kernel,
+        num_warmup=num_warmup,
+        num_samples=num_samples,
+        num_chains=num_chains,
+        progress_bar=progress_bar,
+        jit_model_args=jit_model_args
+    )
+    # RNG key to reproduce results
+    rng_key = jax.random.PRNGKey(params.seed)
+    # Fetch numpy arrays
+    time, flux, flux_err = _get_numpy_arrays(df)
+    # Run MCMC analysis
+    mcmc.run(rng_key, x=time, y=flux, yerr=flux_err, x_interp=time)
+    samples = mcmc.get_samples()
+    mcmc.print_summary()
+    # Get dict of input parameters and lists model parameters
+    params = _get_params_dict(params)
+    names  = _get_param_names(priors)
+    values = [params[n] for n in names]
+    # Get maximum likelihood estimates (MLE)
+    values_mle = _get_mle(df, priors, build_kernel, build_mean, samples, names)
+    # Return and save result dictionary
+    return _save_result(params, names, values, priors, samples, values_mle, ofile)
+
+
+def run_jaxns(df, params, priors, build_mean,
+              build_kernel=None,
+              num_live_points=2000,
+              num_samples=10_000,
+              max_samples=100_000,
+              init_efficiency_threshold=0.1,
+              ofile=None):
+    """Function to run JAXNS modelling.
+    """    
+    # Initialise JAXNS
+    ns = NestedSampler(
+        make_tinygp_model(
+            priors=priors, 
+            build_kernel=build_kernel, 
+            build_mean=build_mean
+        ), 
+        constructor_kwargs={
+            'num_live_points': num_live_points, 
+            'max_samples': max_samples, 
+            'init_efficiency_threshold': init_efficiency_threshold,
+            'gradient_guided': False, 
+            'parameter_estimation': False, 
+            'difficult_model': True,
+            'verbose': False 
+        }
+    )
+    # Random number generator
+    rng_key1, rng_key2 = random.split(random.PRNGKey(params.seed))
+    # Fetch JAX arrays
+    time, flux, flux_err = _get_jax_arrays(df)
+    # Run JAXNS analysis
+    time_interp = jnp.linspace(jnp.amin(time), jnp.amax(time), 500)
+    ns.run(rng_key1, x=time, y=flux, yerr=flux_err, x_interp=time_interp)
+    summary(drop_pred_params(ns._results))
+    # Select a sub-sample for plot
+    samples = ns.get_samples(rng_key2, num_samples=num_samples)
+    # Get dict of input parameters and lists model parameters
+    params = _get_params_dict(params)
+    names  = _get_param_names(priors)
+    values = [params[n] for n in names]
+    # Get maximum likelihood estimates (MLE)
+    values_mle = _get_mle(df, priors, build_kernel, build_mean, samples, names)
+    # Return and save result dictionary
+    return _save_result(params, names, values, priors, samples, values_mle, ofile)
+
+
+def get_posterior_clusters(df, result,
+                           param_cluster='w',
+                           n_components=2,
+                           plot=True):
+    """Function to get cluster structues in posteriors.
+    """
+    # Fetch result entries
+    params  = result['params']
+    names   = result['names']
+    values  = result['values']
+    priors  = result['priors']
+    samples = result['samples']
+    # Seperate cluster with Gaussian mixture model    
+    cluster_model = GaussianMixture(n_components=n_components)
+    response = cluster_model.fit_predict(samples[param_cluster].reshape(-1, 1))
+    pt.plot_clusters(samples, cluster_model, response, param_cluster)
+    # Fetch each cluster
+    clusters = []
+    for c in range(cluster_model.n_components):
+        # Fetch cluster sample
+        sample_cluster = {k: v[response==c] for k,v in samples.items()}
+        # Get maximum likelihood estimates (MLE)
+        build_kernel = None
+        build_mean   = smbhb_mean_builder
+        values_mle = _get_mle(df, priors, build_kernel, build_mean, samples, names)
+        # Append each cluster to result
+        clusters.append(
+            _save_result(params, names, values, priors, sample_cluster, values_mle)
+        )
+    return clusters
+        
 #--------------------------------------------------------------#
-#                        ULTRANEST METHODS                     #
+#                      ULTRANEST METHODS                       #
 #--------------------------------------------------------------#
 
 class model_priors(object):
@@ -119,15 +442,15 @@ class model_priors(object):
     def __init__(self):
         # Observational parameters
         self.z     = [0, 3]
-        self.t0    = [0, 5]
+        self.t0    = [0, 3]
         # Orbital parameters
-        self.P     = [0, 5]
+        self.P     = [0, 3]
         self.i     = [0, 90]
         self.e     = [0, 1]
-        self.w     = [0, 360]
+        self.w     = [0, 180]
         # Physical parameters
-        self.logM1 = [6, 11]
-        self.logM2 = [6, 11]
+        self.logM1 = [5, 11]
+        self.logM2 = [5, 11]
         self.L     = [0, 1]
         # Doppler boosting parameters
         self.alpha = [-4, 4]
@@ -136,221 +459,10 @@ class model_priors(object):
         self.tau   = None
         self.sigma = None
 
-class model_priors_q(object):
+        
+def run_ultranest(df, params, priors, path, live_points=400):
     """Initialise model priors.
     """
-    def __init__(self):
-        # Observational parameters
-        self.z     = [0, 3]
-        self.t0    = [0, 5]
-        # Orbital parameters
-        self.P     = [0, 5]
-        self.i     = [0, 90]
-        self.e     = [0, 1]
-        self.w     = [0, 360]
-        # Physical parameters
-        self.logM  = [5, 11]
-        self.q     = [0, 1]
-        self.L     = [0, 1]
-        # Doppler boosting parameters
-        self.alpha = [-4, 4]
-        self.vz    = [0, 1]
-        # Quasar red-noise parameters
-        self.tau   = None
-        self.sigma = None
-
-        
-
-# def run_ultranest(df, priors, path, nsteps=1000, live_points=400):
-#     """Run UlstraNest using input priors.
-#     """
-#     # Convert observation to numpy arrays
-#     time = df.time.to_numpy()
-#     flux = df.flux.to_numpy()
-#     flux_err = df.flux_err.to_numpy()
-
-#     # Check if prior is range or value
-#     params_names = []
-#     priors_range = []
-#     # names_params = ['z', 't0', 'P', 'i', 'e', 'w',
-#     #                'logM', 'q', 'L', 'alpha', 'vz',
-#     #                'tau', 'sigma']
-#     # names_priors = []
-#     # for name,prior in zip(names_params, names_priors):                  
-
-#     if type(priors.z) == list:
-#         params_names.append('z')
-#         priors_range.append(priors.z)
-#     elif type(priors.z) in [int, float]:
-#         z = float(priors.z)
-    
-#     if type(priors.t0) == list:
-#         params_names.append('t0')
-#         priors_range.append(priors.t0)
-#     elif type(priors.t0) in [int, float]:
-#         t0 = float(priors.t0)
-
-#     if type(priors.P) == list:
-#         params_names.append('P')
-#         priors_range.append(priors.P)
-#     elif type(priors.P) in [int, float]:
-#         P = float(priors.P)
-
-#     if type(priors.i) == list:
-#         params_names.append('i')
-#         priors_range.append(priors.i)
-#     elif type(priors.i) in [int, float]:
-#         i = float(priors.i)
-
-#     if type(priors.e) == list:
-#         params_names.append('e')
-#         priors_range.append(priors.e)
-#     elif type(priors.e) in [int, float]:
-#         e = float(priors.e)
-
-#     if type(priors.w) == list:
-#         params_names.append('w')
-#         priors_range.append(priors.w)
-#     elif type(priors.w) in [int, float]:
-#         w = float(priors.w)
-
-#     if type(priors.logM1) == list:
-#         params_names.append('logM1')
-#         priors_range.append(priors.logM1)
-#     elif type(priors.logM1) in [int, float]:
-#         logM1 = float(priors.logM1)
-
-#     if type(priors.logM2) == list:
-#         params_names.append('logM2')
-#         priors_range.append(priors.logM2)
-#     elif type(priors.logM2) in [int, float]:
-#         logM2 = float(priors.logM2)
-        
-#     if type(priors.L) == list:
-#         params_names.append('L')
-#         priors_range.append(priors.L)
-#     elif type(priors.L) in [int, float]:
-#         L = float(priors.L)
-
-#     if type(priors.alpha) == list:
-#         params_names.append('alpha')
-#         priors_range.append(priors.alpha)
-#     elif type(priors.alpha) in [int, float]:
-#         params_names.append('alpha')
-#         alpha = float(priors.alpha)
-#         priors_range.append(alpha)
-#         #normal = scipy.stats.norm(alpha, 0.5)
-        
-#     if type(priors.vz) == list:
-#         params_names.append('vz')
-#         priors_range.append(priors.vz)
-#     elif type(priors.vz) in [int, float]:
-#         vz = float(priors.vz)
-
-#     if type(priors.tau) == list:
-#         params_names.append('tau')
-#         priors_range.append(priors.tau)
-#     elif type(priors.tau) in [int, float]:
-#         tau = float(priors.tau)
-
-#     if type(priors.sigma) == list:
-#         params_names.append('sigma')
-#         priors_range.append(priors.sigma)
-#     elif type(priors.sigma) in [int, float]:
-#         sigma = float(priors.sigma)
-
-#     # We do not use wrapping so set all elements to False
-#     n = len(params_names)
-#     wrapped_params = np.zeros(n).astype(bool)
-
-#     # print(normal.ppf(alpha))
-#     # exit()
-    
-#     # Define a few function needed for UltraNest
-
-#     # def transform_normal(quantile):
-#     #     return normal.ppf(quantile)
-    
-#     def prior_transform(cube):
-#         """Prior transformation hypercube.
-#         """
-#         p = cube.copy()
-#         x = priors_range 
-#         for i in range(n):
-#             # if i == if type(normal) == scipy.stats._distn_infrastructure.rv_continuous_frozen:
-#             #     p[i] = normal.ppf(cube[i])
-#             # else:
-#             p[i] = cube[i] * (x[i][1] - x[i][0]) + x[i][0]
-#         return p
-
-#     def log_likelihood(p):
-#         """Simple log-likehood using trial parameters.
-#         """        
-#         flux_trial, _, _ = smbhb(
-#             time  = time,
-#             z     = z,
-#             t0    = p[0],
-#             P     = p[1],
-#             i     = p[2],
-#             e     = p[3],
-#             w     = p[4],
-#             logM1 = p[5],
-#             logM2 = p[6],
-#             L     = p[7],
-#             alpha = p[8],
-#             vz    = vz,
-#             tau   = None,
-#             sigma = None,
-#             seed  = None
-#             # Red noise parameters
-#             #         tau   = 50
-#             #         sigma = 300
-#             #         seed  = 123456789
-#             #         cache  = cache  # Can't use cache because free LDs
-#         )
-#         return -0.5 * np.nansum(((flux_trial - flux) / flux_err)**2)
-
-#     # Initialise sampler
-#     sampler = ReactiveNestedSampler(
-#         params_names,
-#         log_likelihood, 
-#         prior_transform,
-#         wrapped_params = wrapped_params,
-#         log_dir        = path,
-#         resume         = 'overwrite',
-# #        vectorized     = True
-#     )
-
-#     # Set number of step and 
-#     sampler.stepsampler = ultranest.stepsampler.RegionSliceSampler(
-#         nsteps          = nsteps,
-#         max_nsteps      = 5000,
-#         adaptive_nsteps = 'move-distance',
-#     )
-
-#     # Run nested sampling
-#     tic  = datetime.datetime.now()
-#     result = sampler.run(min_num_live_points=live_points)
-#     toc  = datetime.datetime.now()
-#     print(f'Execution time: {toc-tic} [h:mm:ss]')
-    
-#     # Always show the distributions
-#     sampler.print_results()
-
-#     # Always show the
-#     # filename = path / "info/results.json"
-#     # with open(filename, 'r') as g:
-#     #     logz = json.load(g)
-#     # print("logz:", results["logz"])
-    
-#     # Return result and sampler
-#     return result, sampler
-
-
-def run_ultranest(df, params, priors, path):
-
-    import numpy as np
-    import datetime
     # Fetch numpy arrays
     time = df.time.to_numpy()
     flux = df.flux.to_numpy()
@@ -360,6 +472,7 @@ def run_ultranest(df, params, priors, path):
                       params.logM1, params.logM2, params.L, params.alpha]
     params_names   = ['t0', 'P', 'i', 'e', 'w', 'logM1', 'logM2', 'L', 'alpha']
     params_wrapped = [False] * len(params_names)
+    params_wrapped[4] = True # For w 
     # Define prior transform
     def prior_transform(cube):
         p = cube.copy()
@@ -408,9 +521,19 @@ def run_ultranest(df, params, priors, path):
         max_nsteps      = 1000,
         adaptive_nsteps = 'move-distance',
     )
+    # Control logging
+    import sys
+    import logging
+    logger = logging.getLogger("ultranest")
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.WARNING)
+    formatter = logging.Formatter('[ultranest] [%(levelname)s] %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.WARNING)
     # Run nested sampling
     tic  = datetime.datetime.now()
-    result = sampler.run(min_num_live_points=400)
+    result = sampler.run(min_num_live_points=live_points)
     toc  = datetime.datetime.now()
     print(f'Execution time: {toc-tic} [h:mm:ss]')
     sampler.print_results()
@@ -418,10 +541,89 @@ def run_ultranest(df, params, priors, path):
     return result, sampler
 
 
+def bestfit_model(time, params, result, likelihood='maximum_likelihood', value='point'):
+    """Fetch the best-fit model light curve.
+    """
+    l = likelihood
+    v = value
+    p = result["paramnames"]
+    # Fetch parameters
+    if 'z' in p: z = result[l][v][p.index('z')]
+    else: z = params.z
+    if 't0' in p: t0 = result[l][v][p.index('t0')]
+    else: t0 = params.t0
+    if 'P' in p: P = result[l][v][p.index('P')]
+    else: P = params.P
+    if 'i' in p: i = result[l][v][p.index('i')]
+    else: i = params.i
+    if 'e' in p: e = result[l][v][p.index('e')]
+    else: e = params.e
+    if 'w' in p: w = result[l][v][p.index('w')]
+    else: w = params.w
+    if 'logM1' in p: logM1 = result[l][v][p.index('logM1')]
+    else: logM1 = params.logM1
+    if 'logM2' in p: logM2 = result[l][v][p.index('logM2')]
+    else: logM2 = params.logM2
+    if 'L' in p: L = result[l][v][p.index('L')]
+    else: L = params.L
+    if 'alpha' in p: alpha = result[l][v][p.index('alpha')]
+    else: alpha = params.alpha
+    if 'vz' in p: vz = result[l][v][p.index('vz')]
+    else: vz = params.vz
+    if 'tau' in p: tau = result[l][v][p.index('tau')]
+    else: tau = params.tau
+    if 'sigma' in p: sigma = result[l][v][p.index('sigma')]
+    else: sigma = params.sigma
+    if 'seed' in p: seed = result[l][v][p.index('seed')]
+    else: seed = params.seed    
+    # Initialise model
+    params_model = smbhb.model_params()
+    params_model.z     = float(z)
+    params_model.t0    = float(t0)
+    params_model.P     = float(P)
+    params_model.i     = float(i)
+    params_model.e     = float(e)
+    params_model.w     = float(w)
+    params_model.logM1 = float(logM1)
+    params_model.logM2 = float(logM2)
+    params_model.L     = float(L)
+    params_model.alpha = float(alpha)
+    params_model.vz    = 0.0
+    params_model.tau   = float(tau)  # Needs to be non-zero
+    params_model.sigma = 0.0
+    params_model.seed  = seed
+    # Evaluate model for each point in time grid    
+    model_bestfit = smbhb.model(params)
+    return model_bestfit.light_curve(time, df=True)
+
+
+#------------------------------------------------------------------------------------
+
+class model_priors_q(object):
+    """Initialise model priors.
+    """
+    def __init__(self):
+        # Observational parameters
+        self.z     = [0, 3]
+        self.t0    = [0, 5]
+        # Orbital parameters
+        self.P     = [0, 5]
+        self.i     = [0, 90]
+        self.e     = [0, 1]
+        self.w     = [0, 360]
+        # Physical parameters
+        self.logM  = [5, 11]
+        self.q     = [0, 1]
+        self.L     = [0, 1]
+        # Doppler boosting parameters
+        self.alpha = [-4, 4]
+        self.vz    = [0, 1]
+        # Quasar red-noise parameters
+        self.tau   = None
+        self.sigma = None
+
 def run_ultranest_q(df, params, priors, path):
 
-    import numpy as np
-    import datetime
     # Fetch numpy arrays
     time = df.time.to_numpy()
     flux = df.flux.to_numpy()
@@ -487,63 +689,6 @@ def run_ultranest_q(df, params, priors, path):
     sampler.print_results()
 
     return result, sampler
-
-
-
-def bestfit_model(time, params, result, likelihood='maximum_likelihood', value='point'):
-    """Fetch the best-fit model light curve.
-    """
-    l = likelihood
-    v = value
-    p = result["paramnames"]
-    # Fetch parameters
-    if 'z' in p: z = result[l][v][p.index('z')]
-    else: z = params.z
-    if 't0' in p: t0 = result[l][v][p.index('t0')]
-    else: t0 = params.t0
-    if 'P' in p: P = result[l][v][p.index('P')]
-    else: P = params.P
-    if 'i' in p: i = result[l][v][p.index('i')]
-    else: i = params.i
-    if 'e' in p: e = result[l][v][p.index('e')]
-    else: e = params.e
-    if 'w' in p: w = result[l][v][p.index('w')]
-    else: w = params.w
-    if 'logM1' in p: logM1 = result[l][v][p.index('logM1')]
-    else: logM1 = params.logM1
-    if 'logM2' in p: logM2 = result[l][v][p.index('logM2')]
-    else: logM2 = params.logM2
-    if 'L' in p: L = result[l][v][p.index('L')]
-    else: L = params.L
-    if 'alpha' in p: alpha = result[l][v][p.index('alpha')]
-    else: alpha = params.alpha
-    if 'vz' in p: vz = result[l][v][p.index('vz')]
-    else: vz = params.vz
-    if 'tau' in p: tau = result[l][v][p.index('tau')]
-    else: tau = params.tau
-    if 'sigma' in p: sigma = result[l][v][p.index('sigma')]
-    else: sigma = params.sigma
-    if 'seed' in p: seed = result[l][v][p.index('seed')]
-    else: seed = params.seed    
-    # Initialise model
-    params_model = smbhb.model_params()
-    params_model.z     = float(z)
-    params_model.t0    = float(t0)
-    params_model.P     = float(P)
-    params_model.i     = float(i)
-    params_model.e     = float(e)
-    params_model.w     = float(w)
-    params_model.logM1 = float(logM1)
-    params_model.logM2 = float(logM2)
-    params_model.L     = float(L)
-    params_model.alpha = float(alpha)
-    params_model.vz    = 0.0
-    params_model.tau   = float(tau)  # Needs to be non-zero
-    params_model.sigma = 0.0
-    params_model.seed  = seed
-    # Evaluate model for each point in time grid    
-    model_bestfit = smbhb.model(params)
-    return model_bestfit.light_curve(time, df=True)
 
 
 def bestfit_model_q(time, params, result, likelihood='maximum_likelihood', value='point'):

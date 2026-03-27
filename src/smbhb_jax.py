@@ -160,9 +160,11 @@ def smbhb_jax(time, z, t0, P, i, e, w, logM1, logM2, L, alpha, vz, **kwargs):
     P     = P  * YEAR
     i     = jnp.deg2rad(i)
     w     = jnp.deg2rad(w)
-    M1     = 10**logM1 * M_SUN
-    M2     = 10**logM2 * M_SUN
+    M1    = 10**logM1 * M_SUN
+    M2    = 10**logM2 * M_SUN
     vz    = float(vz)
+
+    # Binary masses
     M = M1 + M2
     q = 10**(logM2 - logM1)
     
@@ -222,3 +224,79 @@ def smbhb_jax(time, z, t0, P, i, e, w, logM1, logM2, L, alpha, vz, **kwargs):
     F_if_secondary_lenses = (1 - L) * D1 * M_ps + L * D2
     F_if_primary_lenses   = (1 - L) * D1        + L * D2 * M_ps
     return jnp.where(flip, F_if_secondary_lenses, F_if_primary_lenses)
+
+
+def smbhb_jax_q(time, z, t0, P, i, e, w, logM, q, L, alpha, vz, **kwargs):
+    """Magnification of point source limit.
+    """
+    
+    # Make sure to work with floats (to avoid int overflow)
+    z     = float(z)
+    t0    = t0 * YEAR
+    P     = P  * YEAR
+    i     = jnp.deg2rad(i)
+    w     = jnp.deg2rad(w)
+    M     = 10**logM * M_SUN
+    vz    = float(vz)
+
+    # Binary masses
+    M1 = M / (1 + q)
+    M2 = M - M1
+    
+    # Orbital period in binary rest frame [s] 
+    T = _period_observed(P, z)
+
+    # Check parameters
+    fm = _mean_anomaly(time*DAY, t0, T)
+    fe = _eccentric_anomaly_jax(fm, e)
+    #fe = eccentric_anomaly_fixed_iters(fm, e, maxiter=1)
+    f  = _true_anomaly(fe, e)
+
+    # Semi-major axis [cm]        
+    a  = _semimajor_axis(P, M)
+    a1 = a * M2 / M
+
+    # Radial coordinate []
+    r  = _radial_vector(fe, e, a)
+    r1 = _radial_vector(fe, e, a1)
+    
+    # RELATIVISTIC DOPPLER BOOSTING
+    
+    # The RV semi-amplitude of secondary [cm/s]
+    K1, K2 = _rv_semiamplitude(P, M1, M, q, a, i, e)
+    
+    # Projection of the velocity vector on to the line of sight [cm/s]
+    vr1, vr2 = _rv_vector(vz, K1, K2, f, e, w)
+
+    # Gamma factors for each component [cm/s]
+    arg = G_CGS * M * (2/r - 1/a) / C_CGS**2
+    v1_sqr = jnp.minimum(arg * (M2/M)**2, 1-FLOOR)
+    v2_sqr = jnp.minimum(arg * (M1/M)**2, 1-FLOOR)
+    gamma1 = 1 / jnp.sqrt(1 - v1_sqr)
+    gamma2 = 1 / jnp.sqrt(1 - v2_sqr)
+
+    # Relativistic doppler boosting [pp1]
+    D1 = 1 / (gamma1 * (1 - vr1/C_CGS))**(3 - alpha)
+    D2 = 1 / (gamma2 * (1 - vr2/C_CGS))**(3 - alpha)
+    D  = (1 - L) * D1 + L * D2
+    
+    # GRAVITATIONAL SELF-LENSING
+    
+    # Find cartesian position vectors
+    x1, y1, z1, x2, y2, z2 = _xyz_orbital_plane(f, r1, a1, q, i, w)
+
+    # Switch to select secondary as lens (or primary as source)
+    flip = (z1 < 0)
+
+    # Point-source magnification
+    delta = _angular_separation_xy(x1, x2, y1, y2)
+    theta = _angular_einstein_radius(z1, z2, M1, M2, flip)
+    u     = delta / (theta + FLOOR)
+    M_ps  = _magnification_point(u)
+
+    # FINAL LIGHT CURVE
+    
+    F_if_secondary_lenses = (1 - L) * D1 * M_ps + L * D2
+    F_if_primary_lenses   = (1 - L) * D1        + L * D2 * M_ps
+    return jnp.where(flip, F_if_secondary_lenses, F_if_primary_lenses)
+
