@@ -153,7 +153,7 @@ def _get_posterior(samples, names, pt_low=16, pt_upp=84, latex=False):
     return posterior
 
 
-def _save_result(params, names, values, priors, samples, values_mle, ofile=None):
+def _save_result(params, names, values, priors, samples, values_mle, ofile=None, logl=0.0, logz=0.0, logz_err=0.0):
     """Fetch and save result dictionary.
     """
     posterior = _get_posterior(samples, names)
@@ -164,8 +164,8 @@ def _save_result(params, names, values, priors, samples, values_mle, ofile=None)
         'values'   : values,
         # Bayesian inferences
         #'niter': niter,
-        #'logz': logz,
-        #'logz_err': logz_err,
+        'logz': logz,
+        'logz_err': logz_err,
         'priors'   : priors,
         'samples'  : samples,
         'posterior': {
@@ -177,7 +177,7 @@ def _save_result(params, names, values, priors, samples, values_mle, ofile=None)
             'err_upp': posterior['err_upp'],
         },
         'likelihood': {
-            #'logl': ,
+            'logl': logl,
             'mle' : values_mle,
         },       
     }
@@ -265,10 +265,10 @@ def make_tinygp_model(*, priors, build_mean=None, build_kernel=None):
         else:
             if not callable(mean):
                 raise ValueError('You have to provide a mean function or a kernel function')
-            numpyro.sample('obs', dist.Normal(mean(x), yerr).to_event(1), obs=y)
+            numpyro.sample('obs', dist.Normal(jax.vmap(mean)(x), yerr).to_event(1), obs=y)
         #
         if callable(mean) and x_interp is not None:
-            numpyro.deterministic("pred_smbhb", mean(x_interp))
+            numpyro.deterministic("pred_smbhb", jax.vmap(mean)(x_interp))
     return model
 
 
@@ -287,7 +287,7 @@ def drw_kernel(p):
 
 
 def smbhb_mean_builder(p, q=False):
-    return jax.vmap(partial(smbhb_jax, **p))
+    return partial(smbhb_jax, **p)
 
 
 def smbhb_mean_builder_q(p):
@@ -393,12 +393,17 @@ def run_jaxns(df, params, priors, build_mean,
     samples = ns.get_samples(rng_key2, num_samples=num_samples)
     # Get dict of input parameters and lists model parameters
     params = _get_params_dict(params)
+    if build_mean is None:
+        params['mean'] = 1.0
     names  = _get_param_names(priors)
     values = [params[n] for n in names]
     # Get maximum likelihood estimates (MLE)
+    logl = jnp.amax(ns._results.log_L_samples).item()
+    logz = ns._results.log_Z_mean.item()
+    logz_err = ns._results.log_Z_uncert.item()
     values_mle = _get_mle(df, priors, build_kernel, build_mean, samples, names)
     # Return and save result dictionary
-    return _save_result(params, names, values, priors, samples, values_mle, ofile)
+    return _save_result(params, names, values, priors, samples, values_mle, ofile, logl, logz, logz_err)
 
 
 def get_posterior_clusters(df, result,
