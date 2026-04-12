@@ -2,7 +2,6 @@
 """
 This python modules for model generation using Numba JIT.
 """
-
 # Built-in
 import datetime
 

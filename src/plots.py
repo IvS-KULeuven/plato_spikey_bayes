@@ -155,7 +155,7 @@ def plot_model(df, lw=1.5, figsize=(9,5)):
 
 
 def plot_lc(df, dm=None, dv=None, cm='royalblue', cv='orange',
-            ms=6, lw=2, alpha=0.5, figsize=(9,5)):
+            ms=6, lw=2, alpha=0.2, figsize=(9,5)):
     """Select data around planet transits.
     ----------
     df : data  frame: {time [d], flux [pp1], flux_err [pp1]}
@@ -187,10 +187,8 @@ def plot_clusters(samples, cluster_model, response, param_cluster, figsize=(9,5)
     return fig, ax
 
 
-def plot_result(df, dm, alpha=0.5, ms=3,
-                cm='royalblue', lw=1.5,
-                label=None, samples=[], Q0=None,
-                figsize=(9,7)):
+def plot_result(df, dm, alpha=0.2, ms=3, cm='royalblue', lw=2,
+                label=None, samples=[], Q0=None, figsize=(9,7)):
     """Plot data with best fit model and residuals.
     """
     time = df.time.to_numpy()
@@ -203,36 +201,11 @@ def plot_result(df, dm, alpha=0.5, ms=3,
     # Add label
     if label is not None:
         ax0.set_label(loc='upper right')
-    # Plot 95% uncertainties
-    # sample = result['weighted_samples']['points']
-    # quantile = int(len(sample) * (1-uncertainty))
-    # for q in range(quantile):
-    #     p = sample[-q-1]
-    #     params = model_params()
-    #     params.z     = z
-    #     params.t0    = p[0]
-    #     params.P     = p[1]
-    #     params.i     = p[2]
-    #     params.e     = p[3]
-    #     params.w     = p[4]
-    #     params.logM1 = p[5]
-    #     params.logM2 = p[6]
-    #     params.L     = p[7]
-    #     params.alpha = p[8]
-    #     params.vz    = 0
-    #     modelfit = model(params)
-    #     modelflux, _, _ = modelfit.light_curve(time)
-    #     ax0.plot(time, modelflux, '-', c='orange', lw=1, alpha=0.05)
     # Plot maximum-likelihood curve
     ax0.plot(time, dm.flux, '-', c=cm, lw=lw)
     ax0.set_ylabel("Normalized flux")
     ax0.set_xlim(time[0], time[-1])
     ax0.tick_params(labelbottom=False)
-    #ax0.set_xticks([])
-    # Remove last major tick label
-    # labels = ax0.get_yticklabels()
-    # labels[0] = ""
-    # ax0.=set_yticklabels(labels)
     # Plot the residuals
     if 'pred_gp_mean' in samples:
         gp_med_mean = jnp.median(samples["pred_gp_mean"], axis=0)
@@ -248,7 +221,7 @@ def plot_result(df, dm, alpha=0.5, ms=3,
     residuals = df.flux.to_numpy() - dm.flux.to_numpy()
     ax1 = fig.add_subplot(gs[2, 0])
     ax1.errorbar(time, residuals, yerr=df.flux_err, fmt='ok', ms=ms, alpha=alpha, zorder=1)
-    ax1.plot(time, np.zeros_like(time), '--', c=cm, lw=lw)
+    ax1.plot(time, np.zeros_like(time), '--', c=cm, lw=1.5)
     ax1.set_xlabel("Time [days]")
     ax1.set_ylabel("Residuals")
     ax1.set_xlim(time[0], time[-1])

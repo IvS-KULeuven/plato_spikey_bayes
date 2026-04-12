@@ -136,33 +136,5 @@ def get_percentiles(result, pt_low=16, pt_upp=84, latex=False):
         val_upp = np.percentile(sample, pt_upp, axis=0) - val
         table.update({f'{n}':val, f'{n}_low':val_low, f'{n}_upp':val_upp})
         if latex:
-            print(n,': pmx','{',f'{val:.4f}','}{',f'{val_low:.4f}','}{',f'{val_upp:.4f}','}')
+            print(n,': pmx','{',f'{val:.5f}','}{',f'{val_low:.5f}','}{',f'{val_upp:.5f}','}')
     return table
-
-
-# def fetch_gaia_info(df, NED=False):
-#     """Fetch Gaia info for each source in data frame.
-#     Use NASA/IPAC Extragalactic Database (NED).
-#     """
-#     for i in range(df.shape[0]):
-#         di = df.reset_index(drop=True).loc[i]
-#         if NED:
-#             ra, dec = di.RA, di.Dec
-#         else:
-#             ra, dec = di.ra, di.dec
-#         # FIXME sq is not loaded
-#         dx = sq.gaiaQueryCone(ra, dec, radius=0.001, mag_max=21)
-#         if dx.shape[0] > 1:
-#             dx = dx[dx.dis == 0]
-#         if i == 0:
-#             dq = dx
-#         else:
-#             dq = pd.concat((dq, dx))
-            
-#     # Alter data frame
-#     dq = dq.reset_index(drop=True)
-#     dq = dq.drop(columns='dis')
-#     if NED:
-#         dq.insert(0, 'source', df['Object Name'])
-#         dq['z'] = df['Redshift (z)']
-#     return dq 
