@@ -195,17 +195,50 @@ def model_lightcurve_drw(time, result):
     """
     time_int = jnp.linspace(jnp.amin(time), jnp.amax(time), len(time))
     flux_int = jnp.mean(result['samples']['pred_gp_mean'], axis=0)
-    # flux = jnp.mean(result['samples']['pred_gp_mean'], axis=0)
-    # time_int = jnp.linspace(jnp.amin(time), jnp.amax(time), len(time))
-    # interp = scipy.interpolate.make_interp_spline(time, flux, k=3)
-    # flux_int = interp(time_int)
-    return pd.DataFrame({'time': time_int, 'flux': flux_int})
+    interp = scipy.interpolate.make_interp_spline(time_int, flux_int, k=3)
+    flux = interp(time)
+    return pd.DataFrame({'time': time, 'flux': flux})
 
 
-def model_priors_dict(params, logMq=False):
+def model_priors(params, model='DM', flux=None, logMq=False):
     """Model priors of Spikey in dict.
     """
-    if logMq:
+    if model == 'Q':
+        priors = {
+            'tau'  : dist.LogNormal(jnp.log(100.0), 1.0),
+            'sigma': dist.LogNormal(jnp.log(jnp.std(flux)), 0.5),
+            'mean' : dist.Normal(jnp.mean(flux), 0.5),
+        }
+    elif model == 'DM':
+        if logMq:
+            priors = {
+                'z'    : params.z,
+                'vz'   : params.vz,
+                't0'   : dist.Uniform(0, 3),
+                'P'    : dist.Uniform(0, 5),
+                'i'    : dist.Uniform(0, 90),
+                'e'    : dist.Uniform(0, 1),
+                'w'    : dist.Uniform(0, 360),
+                'logM' : dist.Uniform(5, 11),
+                'q'    : dist.Uniform(0, 1),
+                'alpha': dist.Uniform(-4, 4),
+                'L'    : dist.Uniform(0, 1),
+            }
+        else:
+            priors = {
+                'z'    : params.z,
+                'vz'   : params.vz,            
+                't0'   : dist.Uniform(0, 3),
+                'P'    : dist.Uniform(0, 5),
+                'i'    : dist.Uniform(0, 90),
+                'e'    : dist.Uniform(0, 1),
+                'w'    : dist.Uniform(0, 360),
+                'logM1': dist.Uniform(5, 11),
+                'logM2': dist.Uniform(5, 11),
+                'alpha': dist.Uniform(-4, 4),            
+                'L'    : dist.Uniform(0, 1),
+            }
+    elif model == 'QDM':
         priors = {
             'z'    : params.z,
             'vz'   : params.vz,
@@ -214,25 +247,16 @@ def model_priors_dict(params, logMq=False):
             'i'    : dist.Uniform(0, 90),
             'e'    : dist.Uniform(0, 1),
             'w'    : dist.Uniform(0, 360),
-            'logM' : dist.Uniform(5, 11),
-            'q'    : dist.Uniform(0, 1),
-            'alpha': dist.Uniform(-4, 4),
-            'L'    : dist.Uniform(0, 1),
-        }
-    else:
-        priors = {
-            'z'    : params.z,
-            'vz'   : params.vz,            
-            't0'   : dist.Uniform(0, 3),
-            'P'    : dist.Uniform(0, 5),
-            'i'    : dist.Uniform(0, 90),
-            'e'    : dist.Uniform(0, 1),
-            'w'    : dist.Uniform(0, 360),
             'logM1': dist.Uniform(5, 11),
             'logM2': dist.Uniform(5, 11),
-            'alpha': dist.Uniform(-4, 4),            
+            'alpha': dist.Uniform(-4, 4),
             'L'    : dist.Uniform(0, 1),
-        }        
+            'tau'  : dist.LogNormal(jnp.log(100.0), 1.0),
+            'sigma': dist.LogNormal(jnp.log(jnp.std(flux)), 0.5),
+        }
+    else:
+        print(f'Model {model} does not exist! Use either [Q, DM, QDM]')
+        return None
     return priors
 
 
@@ -468,7 +492,7 @@ def get_posterior_clusters(df, result,
 #                      ULTRANEST METHODS                       #
 #--------------------------------------------------------------#
 
-class model_priors(object):
+class model_priors_ultranest(object):
     """Initialise model priors.
     """
     def __init__(self):
@@ -631,7 +655,7 @@ def bestfit_model(time, params, result, likelihood='maximum_likelihood', value='
 
 #------------------------------------------------------------------------------------
 
-class model_priors_q(object):
+class model_priors_ultranest_q(object):
     """Initialise model priors.
     """
     def __init__(self):

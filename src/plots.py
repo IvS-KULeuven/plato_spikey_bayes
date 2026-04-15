@@ -171,7 +171,11 @@ def plot_lc(df, dm=None, dv=None, cm='royalblue', cv='orange',
         ax.plot(dv.time, dv.flux, '-', c=cv, lw=lw)        
     ax.set_xlabel("Time [days]")
     ax.set_ylabel("Normalized flux")
-    ax.set_xlim(time[0], time[-1])
+    # Secure that "0" marker is visible
+    if time[0] < 1:
+        ax.set_xlim(0, time[-1])
+    else:
+        ax.set_xlim(time[0], time[-1])
     plt.tight_layout()
     return fig, ax
 
@@ -187,8 +191,10 @@ def plot_clusters(samples, cluster_model, response, param_cluster, figsize=(9,5)
     return fig, ax
 
 
-def plot_result(df, dm, alpha=0.2, ms=3, cm='royalblue', lw=2,
-                label=None, samples=[], Q0=None, figsize=(9,7)):
+def plot_result(df, dm, alpha=0.2, ms=3,
+                dm_alpha=1, cm='royalblue', lw=2,
+                label=None, samples=[], Q0=None, xoff=-0.09,
+                figsize=(9,7)):
     """Plot data with best fit model and residuals.
     """
     time = df.time.to_numpy()
@@ -202,7 +208,7 @@ def plot_result(df, dm, alpha=0.2, ms=3, cm='royalblue', lw=2,
     if label is not None:
         ax0.set_label(loc='upper right')
     # Plot maximum-likelihood curve
-    ax0.plot(time, dm.flux, '-', c=cm, lw=lw)
+    ax0.plot(time, dm.flux, '-', c=cm, lw=lw, alpha=dm_alpha)
     ax0.set_ylabel("Normalized flux")
     ax0.set_xlim(time[0], time[-1])
     ax0.tick_params(labelbottom=False)
@@ -227,7 +233,7 @@ def plot_result(df, dm, alpha=0.2, ms=3, cm='royalblue', lw=2,
     ax1.set_xlim(time[0], time[-1])
     # Correct labels
     for ax in [ax0, ax1]:
-        ax.get_yaxis().set_label_coords(-0.09, 0.5)
+        ax.get_yaxis().set_label_coords(xoff, 0.5)
     # Plot quarter marks
     if isinstance(Q0, int):
         plot_quarter_marks([ax0, ax1], time, 2, Q0=Q0)

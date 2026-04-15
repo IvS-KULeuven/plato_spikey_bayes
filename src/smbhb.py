@@ -329,15 +329,15 @@ class model_params(object):
         self.i     = 81.95  # Inclination [deg]
         self.e     = 0.524  # Eccentricity
         self.w     = 84.63  # Argument of periapse [deg]
-        self.logM1 = 7.4    # Total mass [log(M_sun)]
-        self.logM2 = 6.7    # Mass ratio
+        self.logM1 = 7.4    # Mass primary [log(M_sun)]
+        self.logM2 = 6.7    # Mass secondary [log(M_sun)]
         self.L     = 0.89   # Luminosity ratio
         self.alpha = 2.09   # Spectral slope
-        self.vz    = 0.     # Relative motion of frames [cm/s]
-        # Quasar red-noise
+        self.vz    = 0.     # Relative motion of frames [c]
+        # Damped Random Walk
         self.tau   = 31.    # [day] (10 mmag = 9.25 ppt -> ut.mmag2ppt(10))
-        self.sigma = 9.25   # [ppm]
-        self.seed  = 12345
+        self.sigma = 9.25   # [ppt]
+        self.seed  = 12345  # Default seed used for paper
         
     
 class model(object):
