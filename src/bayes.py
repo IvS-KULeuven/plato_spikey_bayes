@@ -35,7 +35,7 @@ from ultranest.plot import cornerplot
 # Internal dependencies
 import smbhb as smbhb
 import plots as pt
-from smbhb_jax import smbhb_jax, smbhb_jax_q
+from smbhb_jax import smbhb_jax, smbhb_jax_logMq
 
 #--------------------------------------------------------------#
 #                       INTERNAL METHODS                       #
@@ -272,7 +272,6 @@ def make_smbhb_model(*, priors, build_mean=None):
                 params[name] = numpyro.sample(name, val)
             else:
                 params[name] = val
-
         if build_mean is not None:
             mean = build_mean(params)
         elif 'mean' in params:
@@ -340,8 +339,8 @@ def smbhb_mean_builder(p, q=False):
     return partial(smbhb_jax, **p)
 
 
-def smbhb_mean_builder_q(p):
-    return jax.vmap(partial(smbhb_jax_q, **p))
+def smbhb_mean_builder_logMq(p):
+    return jax.vmap(partial(smbhb_jax_logMq, **p))
 
 
 def get_drw_lc(time, samples):

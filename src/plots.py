@@ -67,47 +67,6 @@ def setup(warning=True):
     if not warning:
         warnings.simplefilter("ignore")
 
-        
-def plot_aitoff(df_agn, df_all=False, df_lop=False, df_best=False, NED=False):
-    """Function to generate plot galactic aFetch Gaia info for each source in data frame.    
-    """    
-    if df_best is not False:
-        df = df_best
-    elif df_lop is not False:
-        df = df_lop
-    elif df_all is not False:
-        df = df_all
-    else:
-        df = df_agn
-    title = (f'Total: {df.shape[0]}, ' +
-             f'LOPN1: {df[df.b > 0].shape[0]}, ' + 
-             f'LOPS2: {df[df.b < 0].shape[0]}')
-    # Plot PLATO AGNs
-    fig, ax = pt.drawStarsInSkyAitoff(
-        df_agn.ra, df_agn.dec, column=df_agn.ncam, cbarMap='Blues',
-        cbarLabel=r'N-CAM visibility, $n_{\rm NCAM}$',
-        title=title, fs=13, figsize=(10,7))
-    # Plot all candidates
-    if df_all is not False:
-        if NED:
-            ra, dec = df_all.RA, df_all.Dec
-        else:
-            ra, dec = df_all.ra, df_all.dec
-        gal = SkyCoord(ra, dec, frame='icrs', unit=u.deg).galactic
-        ax.scatter(-gal.l.wrap_at('180d').radian, gal.b.radian,
-                   c='orange', marker='o', s=10, ec='w', lw=0.8, zorder=4)
-    # Plot candidates within LOPs
-    if df_lop is not False:
-        gal = SkyCoord(ra, dec, frame='icrs', unit=u.deg).galactic
-        ax.scatter(-gal.l.wrap_at('180d').radian, gal.b.radian,
-                   c='k', marker='o', s=20, ec='w', lw=0.8, zorder=5)
-    # Plot best candidates within LOPs
-    if df_best is not False:
-        gal = SkyCoord(df_best.ra, df_best.dec, frame='icrs', unit=u.deg).galactic
-        ax.scatter(-gal.l.wrap_at('180d').radian, gal.b.radian,
-                   c='limegreen', marker='o', s=20, ec='w', lw=0.8, zorder=5);
-    return fig, ax
-
 
 def plot_quarter_marks(ax, time, N, Q0=None):
     """Plot combined or components of model.
@@ -246,9 +205,9 @@ def plot_result(df, dm, alpha=0.2, ms=3,
 def plot_parameter_variation(path, files, values, parameter, unit='', 
                              fiducial=False, ofile=False):
     # Get default paths
-    rdir = path / 'simulations/lcs/reduced'
+    rdir = path / 'simulations/lcs/mission'
     vdir = path / 'simulations/lcs/varsource'
-    
+
     # Load light curves of 1h cadence
     dh1 = pd.read_feather(rdir / f'lc_spikey_{files[0]}_1h.ftr')
     dh2 = pd.read_feather(rdir / f'lc_spikey_{files[1]}_1h.ftr')
@@ -280,7 +239,7 @@ def plot_parameter_variation(path, files, values, parameter, unit='',
     N = len(dh_all)
     ah, ad = 0.1, 0.3
     ch, cd, cv, cvm = 'k', 'gray', 'royalblue', 'orange'
-    
+
     # Plot magnitude dependence of Spikey
     fig, ax = plt.subplots(N, 1, figsize=(8.5, 9))
     for i, x, dh, dd, dv in zip(range(N), values, dh_all, dd_all, dv_all):
@@ -294,8 +253,13 @@ def plot_parameter_variation(path, files, values, parameter, unit='',
             value = f'{x:.1f}'
         else:
             value = f'{x:.0f}'
-        ax[i].errorbar(th, fh, yerr=fh_err, fmt='.', c=ch, alpha=ah, zorder=1, 
-                       label=parameter + r' = ' + value + unit)
+        # Parsing list of labels            
+        if isinstance(parameter, list):
+            ax[i].errorbar(th, fh, yerr=fh_err, fmt='.', c=ch, alpha=ah, zorder=1, 
+                           label=parameter[i])
+        else:
+            ax[i].errorbar(th, fh, yerr=fh_err, fmt='.', c=ch, alpha=ah, zorder=1, 
+                           label=parameter + r' = ' + value + unit)
         ax[i].errorbar(td, fd, yerr=fd_err, fmt='.', c=cd, alpha=ad, zorder=1)
         ax[i].plot(tv, fv, '-', c=cv, lw=0.8)
         ax[i].plot(tv, fv_model, '-', c=cvm, lw=1.5)

@@ -142,25 +142,6 @@ def _xyz_orbital_plane(f, r1, a1, q, i, w, Omega=np.pi/2):
     return x1, y1, z1, x2, y2, z2
 
 
-# @jit(cache=True, nopython=True, fastmath=True, parallel=False)
-# def _radius_schwarzchild(M, q):
-#     """Schwarzchild radius of primary and secondary [cm].
-#     """
-#     RS1 = 2 * C_CGS * M     / ((1 + q) * C_CGS**2)
-#     RS2 = 2 * C_CGS * M * q / ((1 + q) * C_CGS**2)
-#     return RS1, RS2
-
-
-# def einstein_radius(self, phi1, phi2, I):
-#     """Einstein radius of primary and secondary [cm].
-#     """        
-#     RS1, RS2 = self.RS
-#     const = 2 * self.a.value * np.cos(I)
-#     RE1 = np.sqrt(const * RS1.value * np.sin(phi1))
-#     RE2 = np.sqrt(const * RS2.value * np.sin(phi2))        
-#     return RE1, RE2
-
-
 @jit(cache=True, nopython=True, fastmath=True, parallel=False)
 def _angular_separation_xy(x1, x2, y1, y2):
     """Angular separation between lens and source in cartesian coordinates, delta.
@@ -187,7 +168,6 @@ def _magnification_point(u):
     """Magnification of point source limit.
     """
     return (u**2 + 2) / (u * np.sqrt(u**2 + 4))
-
 
 
 @njit
@@ -311,7 +291,6 @@ def model_lightcurve(time, values, df=True):
         params.sigma = 0
     model_lc = model(params)
     return model_lc.light_curve(time, df=df)
-
 
 #-----------------------------------------------------------------
 
@@ -483,7 +462,7 @@ def smbhb(time, z, t0, P, i, e, w, logM1, logM2, L, alpha, vz, tau, sigma, seed)
 
 #-----------------------------------------------------------------
 
-class model_params_q(object):
+class model_params_logMq(object):
     """Load model parameters.
     """
     def __init__(self):
@@ -506,7 +485,7 @@ class model_params_q(object):
         self.sigma = 9.25   # [ppm]
         self.seed  = 12345  # Default seed used through out paper
     
-class model_q(object):
+class model_logMq(object):
     """Load model parameters.
     """
     def __init__(self, params):
@@ -529,7 +508,7 @@ class model_q(object):
     def light_curve(self, time, df=False):
         """Generate light curve from model parameters. 
         """
-        flux, flux_boost, flux_lens = smbhb_q(
+        flux, flux_boost, flux_lens = smbhb_logMq(
             time,
             self.z,
             self.t0,
@@ -569,7 +548,7 @@ class model_q(object):
 
     
 @jit(cache=True, nopython=True, fastmath=True, parallel=False)
-def smbhb_q(time, z, t0, P, i, e, w, logM, q, L, alpha, vz, tau, sigma, seed):
+def smbhb_logMq(time, z, t0, P, i, e, w, logM, q, L, alpha, vz, tau, sigma, seed):
     """Magnification of point source limit.
     """
     # Make sure to work with floats (to avoid int overflow)
