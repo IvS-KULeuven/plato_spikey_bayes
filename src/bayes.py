@@ -35,7 +35,7 @@ from ultranest.plot import cornerplot
 # Internal dependencies
 import smbhb as smbhb
 import plots as pt
-from smbhb_jax import smbhb_jax, smbhb_jax_q
+from smbhb_jax import smbhb_jax, smbhb_jax_logMq
 
 #--------------------------------------------------------------#
 #                       INTERNAL METHODS                       #
@@ -46,8 +46,8 @@ def _get_numpy_arrays(df):
     """
     time = df.time.to_numpy()
     flux = df.flux.to_numpy()
-    flux_err = df.flux_err.to_numpy()
-    return time, flux, flux_err
+    ferr = df.flux_err.to_numpy()
+    return time, flux, ferr
 
 
 def _get_jax_arrays(df):
@@ -153,7 +153,8 @@ def _get_posterior(samples, names, pt_low=16, pt_upp=84, latex=False):
     return posterior
 
 
-def _save_result(params, names, values, priors, samples, values_mle, ofile=None, logl=0.0, logz=0.0, logz_err=0.0):
+def _save_result(params, names, values, priors, samples, values_mle, ofile=None,
+                 logl=0.0, logz=0.0, logz_err=0.0):
     """Fetch and save result dictionary.
     """
     posterior = _get_posterior(samples, names)
@@ -163,7 +164,6 @@ def _save_result(params, names, values, priors, samples, values_mle, ofile=None,
         'names'    : names,
         'values'   : values,
         # Bayesian inferences
-        #'niter': niter,
         'logz': logz,
         'logz_err': logz_err,
         'priors'   : priors,
@@ -182,7 +182,7 @@ def _save_result(params, names, values, priors, samples, values_mle, ofile=None,
         },       
     }
     if ofile:
-        ofile.parent.mkdir(parents=True, exist_ok=True)
+        #ofile.parent.mkdir(parents=True, exist_ok=True)
         np.save(ofile, result)
     return result
 
@@ -190,27 +190,78 @@ def _save_result(params, names, values, priors, samples, values_mle, ofile=None,
 #                  NUMPYRO AND JAXNS METHODS                   #
 #--------------------------------------------------------------#
 
-def model_priors_dict(params):
+def model_lightcurve_drw(time, result):
+    """Model light curve of DRW from params.
+    """
+    time_int = jnp.linspace(jnp.amin(time), jnp.amax(time), len(time))
+    flux_int = jnp.mean(result['samples']['pred_gp_mean'], axis=0)
+    interp = scipy.interpolate.make_interp_spline(time_int, flux_int, k=3)
+    flux = interp(time)
+    return pd.DataFrame({'time': time, 'flux': flux})
+
+
+def model_priors(params, model='DM', flux=None, logMq=False):
     """Model priors of Spikey in dict.
     """
-    priors = {
-    'z'    : params.z,
-    't0'   : dist.Uniform(0, 3),
-    'P'    : dist.Uniform(0, 5),
-    'i'    : dist.Uniform(0, 90),
-    'e'    : dist.Uniform(0, 1),
-    'w'    : dist.Uniform(0, 360),
-    'logM1': dist.Uniform(5, 11),
-    'logM2': dist.Uniform(5, 11),
-    'alpha': dist.Uniform(-4, 4),
-    'L'    : dist.Uniform(0, 1),
-    'vz'   : params.vz,
-    }
+    if model == 'Q':
+        priors = {
+            'tau'  : dist.LogNormal(jnp.log(100.0), 1.0),
+            'sigma': dist.LogNormal(jnp.log(jnp.std(flux)), 0.5),
+            'mean' : dist.Normal(jnp.mean(flux), 0.5),
+        }
+    elif model == 'DM':
+        if logMq:
+            priors = {
+                'z'    : params.z,
+                'vz'   : params.vz,
+                't0'   : dist.Uniform(0, 3),
+                'P'    : dist.Uniform(0, 5),
+                'i'    : dist.Uniform(0, 90),
+                'e'    : dist.Uniform(0, 1),
+                'w'    : dist.Uniform(0, 360),
+                'logM' : dist.Uniform(5, 11),
+                'q'    : dist.Uniform(0, 1),
+                'alpha': dist.Uniform(-4, 4),
+                'L'    : dist.Uniform(0, 1),
+            }
+        else:
+            priors = {
+                'z'    : params.z,
+                'vz'   : params.vz,            
+                't0'   : dist.Uniform(0, 3),
+                'P'    : dist.Uniform(0, 5),
+                'i'    : dist.Uniform(0, 90),
+                'e'    : dist.Uniform(0, 1),
+                'w'    : dist.Uniform(0, 360),
+                'logM1': dist.Uniform(5, 11),
+                'logM2': dist.Uniform(5, 11),
+                'alpha': dist.Uniform(-4, 4),            
+                'L'    : dist.Uniform(0, 1),
+            }
+    elif model == 'QDM':
+        priors = {
+            'z'    : params.z,
+            'vz'   : params.vz,
+            't0'   : dist.Uniform(0, 3),
+            'P'    : dist.Uniform(0, 5),
+            'i'    : dist.Uniform(0, 90),
+            'e'    : dist.Uniform(0, 1),
+            'w'    : dist.Uniform(0, 360),
+            'logM1': dist.Uniform(5, 11),
+            'logM2': dist.Uniform(5, 11),
+            'alpha': dist.Uniform(-4, 4),
+            'L'    : dist.Uniform(0, 1),
+            'tau'  : dist.LogNormal(jnp.log(100.0), 1.0),
+            'sigma': dist.LogNormal(jnp.log(jnp.std(flux)), 0.5),
+        }
+    else:
+        print(f'Model {model} does not exist! Use either [Q, DM, QDM]')
+        return None
     return priors
 
 
 def make_smbhb_model(*, priors, build_mean=None):
-    """
+    """Function to generate a Numpyro function for DM model. 
     Returns a NumPyro model function:
     model(x, yerr, y=None, fixed=None, x_interp=None)
     """
@@ -221,7 +272,6 @@ def make_smbhb_model(*, priors, build_mean=None):
                 params[name] = numpyro.sample(name, val)
             else:
                 params[name] = val
-
         if build_mean is not None:
             mean = build_mean(params)
         elif 'mean' in params:
@@ -235,7 +285,6 @@ def make_smbhb_model(*, priors, build_mean=None):
 
 def make_tinygp_model(*, priors, build_mean=None, build_kernel=None):
     """Function to generate NumPyro Gaussian process model.
- 
     Returns a NumPyro model function:
     model(x, yerr, y=None, fixed=None, x_interp=None)
     """
@@ -290,8 +339,8 @@ def smbhb_mean_builder(p, q=False):
     return partial(smbhb_jax, **p)
 
 
-def smbhb_mean_builder_q(p):
-    return jax.vmap(partial(smbhb_jax_q, **p))
+def smbhb_mean_builder_logMq(p):
+    return jax.vmap(partial(smbhb_jax_logMq, **p))
 
 
 def get_drw_lc(time, samples):
@@ -386,7 +435,7 @@ def run_jaxns(df, params, priors, build_mean,
     # Fetch JAX arrays
     time, flux, flux_err = _get_jax_arrays(df)
     # Run JAXNS analysis
-    time_interp = jnp.linspace(jnp.amin(time), jnp.amax(time), 500)
+    time_interp = jnp.linspace(jnp.amin(time), jnp.amax(time), len(time))
     ns.run(rng_key1, x=time, y=flux, yerr=flux_err, x_interp=time_interp)
     summary(drop_pred_params(ns._results))
     # Select a sub-sample for plot
@@ -403,7 +452,8 @@ def run_jaxns(df, params, priors, build_mean,
     logz_err = ns._results.log_Z_uncert.item()
     values_mle = _get_mle(df, priors, build_kernel, build_mean, samples, names)
     # Return and save result dictionary
-    return _save_result(params, names, values, priors, samples, values_mle, ofile, logl, logz, logz_err)
+    return _save_result(params, names, values, priors, samples, values_mle, ofile,
+                        logl, logz, logz_err)
 
 
 def get_posterior_clusters(df, result,
@@ -441,7 +491,7 @@ def get_posterior_clusters(df, result,
 #                      ULTRANEST METHODS                       #
 #--------------------------------------------------------------#
 
-class model_priors(object):
+class model_priors_ultranest(object):
     """Initialise model priors.
     """
     def __init__(self):
@@ -466,7 +516,7 @@ class model_priors(object):
 
         
 def run_ultranest(df, params, priors, path, live_points=400):
-    """Initialise model priors.
+    """Run nested sampling with UltraNest.
     """
     # Fetch numpy arrays
     time = df.time.to_numpy()
@@ -604,7 +654,7 @@ def bestfit_model(time, params, result, likelihood='maximum_likelihood', value='
 
 #------------------------------------------------------------------------------------
 
-class model_priors_q(object):
+class model_priors_ultranest_q(object):
     """Initialise model priors.
     """
     def __init__(self):
@@ -627,7 +677,11 @@ class model_priors_q(object):
         self.tau   = None
         self.sigma = None
 
-def run_ultranest_q(df, params, priors, path):
+def run_ultranest_q(df, params, priors, odir,
+                    nsteps=1000,
+                    max_nsteps=1000,
+                    min_num_live_points=400,
+                    report_time=False):
 
     # Fetch numpy arrays
     time = df.time.to_numpy()
@@ -677,22 +731,25 @@ def run_ultranest_q(df, params, priors, path):
         log_likelihood, 
         prior_transform,
         wrapped_params = params_wrapped,
-        log_dir        = path,
+        log_dir        = odir,
         resume         = 'overwrite',
     )
     # Initialise step sampler
     sampler.stepsampler = ultranest.stepsampler.RegionSliceSampler(
-        nsteps          = 1000,
-        max_nsteps      = 1000,
+        nsteps          = nsteps,
+        max_nsteps      = max_nsteps,
         adaptive_nsteps = 'move-distance',
     )
     # Run nested sampling
-    tic  = datetime.datetime.now()
-    result = sampler.run(min_num_live_points=400)
-    toc  = datetime.datetime.now()
-    print(f'Execution time: {toc-tic} [h:mm:ss]')
+    if report_time:
+        tic  = datetime.datetime.now()
+        result = sampler.run(min_num_live_points=min_num_live_points)
+        toc  = datetime.datetime.now()
+        print(f'Execution time: {toc-tic} [h:mm:ss]')
+    else:
+        result = sampler.run(min_num_live_points=min_num_live_points)
+    # Print and return results
     sampler.print_results()
-
     return result, sampler
 
 

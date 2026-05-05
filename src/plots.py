@@ -67,47 +67,6 @@ def setup(warning=True):
     if not warning:
         warnings.simplefilter("ignore")
 
-        
-def plot_aitoff(df_agn, df_all=False, df_lop=False, df_best=False, NED=False):
-    """Function to generate plot galactic aFetch Gaia info for each source in data frame.    
-    """    
-    if df_best is not False:
-        df = df_best
-    elif df_lop is not False:
-        df = df_lop
-    elif df_all is not False:
-        df = df_all
-    else:
-        df = df_agn
-    title = (f'Total: {df.shape[0]}, ' +
-             f'LOPN1: {df[df.b > 0].shape[0]}, ' + 
-             f'LOPS2: {df[df.b < 0].shape[0]}')
-    # Plot PLATO AGNs
-    fig, ax = pt.drawStarsInSkyAitoff(
-        df_agn.ra, df_agn.dec, column=df_agn.ncam, cbarMap='Blues',
-        cbarLabel=r'N-CAM visibility, $n_{\rm NCAM}$',
-        title=title, fs=13, figsize=(10,7))
-    # Plot all candidates
-    if df_all is not False:
-        if NED:
-            ra, dec = df_all.RA, df_all.Dec
-        else:
-            ra, dec = df_all.ra, df_all.dec
-        gal = SkyCoord(ra, dec, frame='icrs', unit=u.deg).galactic
-        ax.scatter(-gal.l.wrap_at('180d').radian, gal.b.radian,
-                   c='orange', marker='o', s=10, ec='w', lw=0.8, zorder=4)
-    # Plot candidates within LOPs
-    if df_lop is not False:
-        gal = SkyCoord(ra, dec, frame='icrs', unit=u.deg).galactic
-        ax.scatter(-gal.l.wrap_at('180d').radian, gal.b.radian,
-                   c='k', marker='o', s=20, ec='w', lw=0.8, zorder=5)
-    # Plot best candidates within LOPs
-    if df_best is not False:
-        gal = SkyCoord(df_best.ra, df_best.dec, frame='icrs', unit=u.deg).galactic
-        ax.scatter(-gal.l.wrap_at('180d').radian, gal.b.radian,
-                   c='limegreen', marker='o', s=20, ec='w', lw=0.8, zorder=5);
-    return fig, ax
-
 
 def plot_quarter_marks(ax, time, N, Q0=None):
     """Plot combined or components of model.
@@ -155,7 +114,7 @@ def plot_model(df, lw=1.5, figsize=(9,5)):
 
 
 def plot_lc(df, dm=None, dv=None, cm='royalblue', cv='orange',
-            ms=6, lw=2, alpha=0.5, figsize=(9,5)):
+            ms=6, lw=2, alpha=0.2, figsize=(9,5)):
     """Select data around planet transits.
     ----------
     df : data  frame: {time [d], flux [pp1], flux_err [pp1]}
@@ -171,7 +130,11 @@ def plot_lc(df, dm=None, dv=None, cm='royalblue', cv='orange',
         ax.plot(dv.time, dv.flux, '-', c=cv, lw=lw)        
     ax.set_xlabel("Time [days]")
     ax.set_ylabel("Normalized flux")
-    ax.set_xlim(time[0], time[-1])
+    # Secure that "0" marker is visible
+    if time[0] < 1:
+        ax.set_xlim(0, time[-1])
+    else:
+        ax.set_xlim(time[0], time[-1])
     plt.tight_layout()
     return fig, ax
 
@@ -187,9 +150,9 @@ def plot_clusters(samples, cluster_model, response, param_cluster, figsize=(9,5)
     return fig, ax
 
 
-def plot_result(df, dm, alpha=0.5, ms=3,
-                cm='royalblue', lw=1.5,
-                label=None, samples=[], Q0=None,
+def plot_result(df, dm, alpha=0.2, ms=3,
+                dm_alpha=1, cm='royalblue', lw=2,
+                label=None, samples=[], Q0=None, xoff=-0.09,
                 figsize=(9,7)):
     """Plot data with best fit model and residuals.
     """
@@ -203,36 +166,11 @@ def plot_result(df, dm, alpha=0.5, ms=3,
     # Add label
     if label is not None:
         ax0.set_label(loc='upper right')
-    # Plot 95% uncertainties
-    # sample = result['weighted_samples']['points']
-    # quantile = int(len(sample) * (1-uncertainty))
-    # for q in range(quantile):
-    #     p = sample[-q-1]
-    #     params = model_params()
-    #     params.z     = z
-    #     params.t0    = p[0]
-    #     params.P     = p[1]
-    #     params.i     = p[2]
-    #     params.e     = p[3]
-    #     params.w     = p[4]
-    #     params.logM1 = p[5]
-    #     params.logM2 = p[6]
-    #     params.L     = p[7]
-    #     params.alpha = p[8]
-    #     params.vz    = 0
-    #     modelfit = model(params)
-    #     modelflux, _, _ = modelfit.light_curve(time)
-    #     ax0.plot(time, modelflux, '-', c='orange', lw=1, alpha=0.05)
     # Plot maximum-likelihood curve
-    ax0.plot(time, dm.flux, '-', c=cm, lw=lw)
+    ax0.plot(time, dm.flux, '-', c=cm, lw=lw, alpha=dm_alpha)
     ax0.set_ylabel("Normalized flux")
     ax0.set_xlim(time[0], time[-1])
     ax0.tick_params(labelbottom=False)
-    #ax0.set_xticks([])
-    # Remove last major tick label
-    # labels = ax0.get_yticklabels()
-    # labels[0] = ""
-    # ax0.=set_yticklabels(labels)
     # Plot the residuals
     if 'pred_gp_mean' in samples:
         gp_med_mean = jnp.median(samples["pred_gp_mean"], axis=0)
@@ -248,13 +186,13 @@ def plot_result(df, dm, alpha=0.5, ms=3,
     residuals = df.flux.to_numpy() - dm.flux.to_numpy()
     ax1 = fig.add_subplot(gs[2, 0])
     ax1.errorbar(time, residuals, yerr=df.flux_err, fmt='ok', ms=ms, alpha=alpha, zorder=1)
-    ax1.plot(time, np.zeros_like(time), '--', c=cm, lw=lw)
+    ax1.plot(time, np.zeros_like(time), '--', c=cm, lw=1.5)
     ax1.set_xlabel("Time [days]")
     ax1.set_ylabel("Residuals")
     ax1.set_xlim(time[0], time[-1])
     # Correct labels
     for ax in [ax0, ax1]:
-        ax.get_yaxis().set_label_coords(-0.09, 0.5)
+        ax.get_yaxis().set_label_coords(xoff, 0.5)
     # Plot quarter marks
     if isinstance(Q0, int):
         plot_quarter_marks([ax0, ax1], time, 2, Q0=Q0)
@@ -267,9 +205,9 @@ def plot_result(df, dm, alpha=0.5, ms=3,
 def plot_parameter_variation(path, files, values, parameter, unit='', 
                              fiducial=False, ofile=False):
     # Get default paths
-    rdir = path / 'simulations/lcs/reduced'
+    rdir = path / 'simulations/lcs/mission'
     vdir = path / 'simulations/lcs/varsource'
-    
+
     # Load light curves of 1h cadence
     dh1 = pd.read_feather(rdir / f'lc_spikey_{files[0]}_1h.ftr')
     dh2 = pd.read_feather(rdir / f'lc_spikey_{files[1]}_1h.ftr')
@@ -301,7 +239,7 @@ def plot_parameter_variation(path, files, values, parameter, unit='',
     N = len(dh_all)
     ah, ad = 0.1, 0.3
     ch, cd, cv, cvm = 'k', 'gray', 'royalblue', 'orange'
-    
+
     # Plot magnitude dependence of Spikey
     fig, ax = plt.subplots(N, 1, figsize=(8.5, 9))
     for i, x, dh, dd, dv in zip(range(N), values, dh_all, dd_all, dv_all):
@@ -315,8 +253,13 @@ def plot_parameter_variation(path, files, values, parameter, unit='',
             value = f'{x:.1f}'
         else:
             value = f'{x:.0f}'
-        ax[i].errorbar(th, fh, yerr=fh_err, fmt='.', c=ch, alpha=ah, zorder=1, 
-                       label=parameter + r' = ' + value + unit)
+        # Parsing list of labels            
+        if isinstance(parameter, list):
+            ax[i].errorbar(th, fh, yerr=fh_err, fmt='.', c=ch, alpha=ah, zorder=1, 
+                           label=parameter[i])
+        else:
+            ax[i].errorbar(th, fh, yerr=fh_err, fmt='.', c=ch, alpha=ah, zorder=1, 
+                           label=parameter + r' = ' + value + unit)
         ax[i].errorbar(td, fd, yerr=fd_err, fmt='.', c=cd, alpha=ad, zorder=1)
         ax[i].plot(tv, fv, '-', c=cv, lw=0.8)
         ax[i].plot(tv, fv_model, '-', c=cvm, lw=1.5)

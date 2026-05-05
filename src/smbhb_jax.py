@@ -2,6 +2,7 @@
 """
 This python modules for model generation using JAX.
 """
+# uv dependencies
 import jax
 import jax.numpy as jnp
 from jax import lax
@@ -226,7 +227,7 @@ def smbhb_jax(time, z, t0, P, i, e, w, logM1, logM2, L, alpha, vz, **kwargs):
     return jnp.where(flip, F_if_secondary_lenses, F_if_primary_lenses)
 
 
-def smbhb_jax_q(time, z, t0, P, i, e, w, logM, q, L, alpha, vz, **kwargs):
+def smbhb_jax_logMq(time, z, t0, P, i, e, w, logM, q, L, alpha, vz, **kwargs):
     """Magnification of point source limit.
     """
     
